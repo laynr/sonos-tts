@@ -11,6 +11,9 @@ from typing import List, Optional
 from gtts import gTTS
 import tempfile
 import os
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+import threading
+import socket
 
 def discover_devices(timeout: int = 5) -> List[soco.SoCo]:
     """
@@ -103,6 +106,86 @@ def generate_tts(text: str, lang: str = 'en') -> Optional[str]:
         print(f"Error generating TTS: {e}")
         print("Check your internet connection and try again.")
         return None
+
+def get_local_ip() -> str:
+    """
+    Get the local IP address of this machine.
+
+    Returns:
+        Local IP address as string
+    """
+    try:
+        # Connect to external address to determine local IP
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+        return local_ip
+    except Exception:
+        return "127.0.0.1"
+
+class AudioHTTPHandler(SimpleHTTPRequestHandler):
+    """Custom HTTP handler that serves a single audio file."""
+
+    audio_file_path = None
+
+    def do_GET(self):
+        """Handle GET request for audio file."""
+        if self.path == '/audio.mp3':
+            try:
+                with open(self.audio_file_path, 'rb') as f:
+                    self.send_response(200)
+                    self.send_header('Content-type', 'audio/mpeg')
+                    self.send_header('Content-Length', os.path.getsize(self.audio_file_path))
+                    self.end_headers()
+                    self.wfile.write(f.read())
+            except Exception as e:
+                self.send_error(500, f"Error serving file: {e}")
+        else:
+            self.send_error(404, "File not found")
+
+    def log_message(self, format, *args):
+        """Suppress default logging."""
+        pass
+
+
+def start_http_server(audio_file: str, max_attempts: int = 3) -> Optional[tuple]:
+    """
+    Start HTTP server to serve audio file.
+
+    Args:
+        audio_file: Path to audio file to serve
+        max_attempts: Maximum number of port attempts
+
+    Returns:
+        Tuple of (server, url) or None on failure
+    """
+    local_ip = get_local_ip()
+    AudioHTTPHandler.audio_file_path = audio_file
+
+    for attempt in range(max_attempts):
+        try:
+            # Try random port between 8000-9000
+            port = 8000 + attempt * 100 + (os.getpid() % 100)
+            server = HTTPServer((local_ip, port), AudioHTTPHandler)
+
+            # Start server in background thread
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+
+            url = f"http://{local_ip}:{port}/audio.mp3"
+            print(f"HTTP server started: {url}")
+            return (server, url)
+
+        except OSError as e:
+            if attempt < max_attempts - 1:
+                print(f"Port {port} unavailable, retrying...")
+                continue
+            else:
+                print(f"Error starting HTTP server: {e}")
+                return None
+
+    return None
 
 def main():
     """Main entry point for the CLI."""
