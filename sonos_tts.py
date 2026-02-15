@@ -5,6 +5,8 @@ Sonos Text-to-Speech Tool
 Discovers Sonos devices on the network and plays text messages using Google TTS.
 """
 
+__version__ = "1.0.0"
+
 import sys
 import soco
 from typing import List, Optional
@@ -329,6 +331,12 @@ Examples:
   %(prog)s "Welcome home" --volume 50
   %(prog)s "Good morning" --lang en-gb
         """
+    )
+
+    parser.add_argument(
+        '--version',
+        action='version',
+        version=f'%(prog)s {__version__}'
     )
 
     parser.add_argument(
