@@ -14,6 +14,8 @@ import os
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 import threading
 import socket
+import time
+from soco.exceptions import SoCoException
 
 def discover_devices(timeout: int = 5) -> List[soco.SoCo]:
     """
@@ -187,11 +189,139 @@ def start_http_server(audio_file: str, max_attempts: int = 3) -> Optional[tuple]
 
     return None
 
+def capture_state(device: soco.SoCo) -> dict:
+    """
+    Capture current playback state of Sonos device.
+
+    Args:
+        device: SoCo device object
+
+    Returns:
+        Dictionary containing state information
+    """
+    try:
+        transport_info = device.get_current_transport_info()
+        track_info = device.get_current_track_info()
+
+        state = {
+            'transport_state': transport_info['current_transport_state'],
+            'track_uri': track_info.get('uri', ''),
+            'position': track_info.get('position', '0:00:00'),
+            'volume': device.volume,
+        }
+
+        print(f"Captured state: {state['transport_state']}")
+        return state
+
+    except Exception as e:
+        print(f"Warning: Could not capture state: {e}")
+        return {}
+
+
+def restore_state(device: soco.SoCo, state: dict) -> bool:
+    """
+    Restore previous playback state of Sonos device.
+
+    Args:
+        device: SoCo device object
+        state: State dictionary from capture_state()
+
+    Returns:
+        True if restoration succeeded, False otherwise
+    """
+    if not state:
+        return False
+
+    try:
+        # Restore volume
+        if 'volume' in state:
+            device.volume = state['volume']
+
+        # Restore playback if there was something playing
+        if state.get('track_uri') and state['transport_state'] in ['PLAYING', 'PAUSED_PLAYBACK']:
+            device.play_uri(state['track_uri'])
+
+            # Seek to position if available
+            if state.get('position') and state['position'] != '0:00:00':
+                device.seek(state['position'])
+
+            # Resume if it was paused
+            if state['transport_state'] == 'PAUSED_PLAYBACK':
+                device.pause()
+
+            print("Restored previous playback")
+            return True
+
+    except Exception as e:
+        print(f"Warning: Could not restore state: {e}")
+        return False
+
+    return True
+
+
+def play_on_sonos(device: soco.SoCo, audio_url: str, volume: Optional[int] = None) -> bool:
+    """
+    Play audio on Sonos device and restore previous state.
+
+    Args:
+        device: SoCo device object
+        audio_url: HTTP URL to audio file
+        volume: Optional volume level (0-100)
+
+    Returns:
+        True if playback succeeded, False otherwise
+    """
+    # Capture current state
+    previous_state = capture_state(device)
+
+    try:
+        # Set volume if specified
+        if volume is not None:
+            print(f"Setting volume to {volume}")
+            device.volume = volume
+
+        # Play TTS audio
+        print(f"Playing on {device.player_name}...")
+        device.play_uri(audio_url)
+
+        # Wait for playback to complete
+        # Poll transport state until it's no longer playing
+        max_wait = 30  # Maximum 30 seconds
+        start_time = time.time()
+
+        while time.time() - start_time < max_wait:
+            time.sleep(0.5)
+            try:
+                transport_info = device.get_current_transport_info()
+                state = transport_info['current_transport_state']
+
+                if state == 'STOPPED':
+                    print("Playback completed")
+                    break
+            except Exception:
+                continue
+
+        # Restore previous state
+        time.sleep(0.5)  # Brief pause before restoring
+        restore_state(device, previous_state)
+
+        return True
+
+    except SoCoException as e:
+        print(f"Error playing on Sonos: {e}")
+        # Attempt to restore state even on error
+        restore_state(device, previous_state)
+        return False
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        restore_state(device, previous_state)
+        return False
+
 def main():
     """Main entry point for the CLI."""
-    # Temporary hardcoded message for testing
     message = "Hello world"
 
+    # Discovery
     devices = discover_devices()
     if not devices:
         return 1
@@ -201,20 +331,38 @@ def main():
         print("No device selected. Exiting.")
         return 1
 
+    # Generate TTS
     audio_file = generate_tts(message)
     if not audio_file:
         return 1
 
-    print(f"\nReady to play on {device.player_name}")
-    print(f"Audio file: {audio_file}")
-
-    # Cleanup temp file
-    try:
+    # Start HTTP server
+    server_result = start_http_server(audio_file)
+    if not server_result:
         os.remove(audio_file)
-        print(f"Cleaned up: {audio_file}")
-    except Exception as e:
-        print(f"Warning: Could not delete temp file: {e}")
+        return 1
 
+    server, audio_url = server_result
+
+    try:
+        # Play on Sonos
+        success = play_on_sonos(device, audio_url)
+
+        if not success:
+            return 1
+
+    finally:
+        # Cleanup
+        print("\nCleaning up...")
+        server.shutdown()
+        time.sleep(0.5)
+
+        try:
+            os.remove(audio_file)
+        except Exception as e:
+            print(f"Warning: Could not delete temp file: {e}")
+
+    print("\nDone!")
     return 0
 
 if __name__ == "__main__":
