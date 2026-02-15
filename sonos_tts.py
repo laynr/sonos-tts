@@ -16,6 +16,7 @@ import threading
 import socket
 import time
 from soco.exceptions import SoCoException
+import argparse
 
 def discover_devices(timeout: int = 5) -> List[soco.SoCo]:
     """
@@ -317,12 +318,60 @@ def play_on_sonos(device: soco.SoCo, audio_url: str, volume: Optional[int] = Non
         restore_state(device, previous_state)
         return False
 
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description='Play text-to-speech messages on Sonos devices',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s "Hello world"
+  %(prog)s "Welcome home" --volume 50
+  %(prog)s "Good morning" --lang en-gb
+        """
+    )
+
+    parser.add_argument(
+        'message',
+        help='Text message to speak'
+    )
+
+    parser.add_argument(
+        '--volume', '-v',
+        type=int,
+        metavar='N',
+        help='Volume level (0-100), defaults to current volume'
+    )
+
+    parser.add_argument(
+        '--lang', '-l',
+        default='en',
+        metavar='CODE',
+        help='Language code (default: en). Examples: en, en-gb, es, fr, de'
+    )
+
+    parser.add_argument(
+        '--timeout', '-t',
+        type=int,
+        default=5,
+        metavar='SEC',
+        help='Device discovery timeout in seconds (default: 5)'
+    )
+
+    args = parser.parse_args()
+
+    # Validate volume
+    if args.volume is not None and not (0 <= args.volume <= 100):
+        parser.error("Volume must be between 0 and 100")
+
+    return args
+
 def main():
     """Main entry point for the CLI."""
-    message = "Hello world"
+    args = parse_args()
 
     # Discovery
-    devices = discover_devices()
+    devices = discover_devices(timeout=args.timeout)
     if not devices:
         return 1
 
@@ -332,7 +381,7 @@ def main():
         return 1
 
     # Generate TTS
-    audio_file = generate_tts(message)
+    audio_file = generate_tts(args.message, lang=args.lang)
     if not audio_file:
         return 1
 
@@ -346,7 +395,7 @@ def main():
 
     try:
         # Play on Sonos
-        success = play_on_sonos(device, audio_url)
+        success = play_on_sonos(device, audio_url, volume=args.volume)
 
         if not success:
             return 1
