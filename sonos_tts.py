@@ -335,7 +335,8 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s "Hello world"                      # Play on all devices
+  %(prog)s --list                              # List available devices
+  %(prog)s "Hello world"                       # Play on all devices
   %(prog)s "Welcome home" --volume 50          # All devices at volume 50
   %(prog)s "Good morning" --device Kitchen     # Play on specific device
   %(prog)s "Bonjour" --lang fr --device Bedroom
@@ -350,6 +351,7 @@ Examples:
 
     parser.add_argument(
         'message',
+        nargs='?',
         help='Text message to speak'
     )
 
@@ -381,11 +383,21 @@ Examples:
         help='Play on specific device by name. If not specified, plays on all devices.'
     )
 
+    parser.add_argument(
+        '--list',
+        action='store_true',
+        help='List available Sonos devices and exit'
+    )
+
     args = parser.parse_args()
 
     # Validate volume
     if args.volume is not None and not (0 <= args.volume <= 100):
         parser.error("Volume must be between 0 and 100")
+
+    # Make message optional if just listing devices
+    if args.list and not args.message:
+        args.message = None
 
     return args
 
@@ -396,6 +408,18 @@ def main():
     # Discovery
     devices = discover_devices(timeout=args.timeout)
     if not devices:
+        return 1
+
+    # If --list flag, show devices and exit
+    if args.list:
+        print("\nAvailable Sonos devices:")
+        for device in devices:
+            print(f"  - {device.player_name} ({device.ip_address})")
+        return 0
+
+    # Require message if not just listing
+    if not args.message:
+        print("Error: message is required (unless using --list)")
         return 1
 
     # Determine which devices to use
