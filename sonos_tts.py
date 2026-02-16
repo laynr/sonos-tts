@@ -43,7 +43,9 @@ def discover_devices(timeout: int = 5) -> List[soco.SoCo]:
         print("No Sonos devices found. Make sure you're on the same network.")
         return []
 
-    print(f"Found {len(devices)} device(s)")
+    print(f"Found {len(devices)} device(s):")
+    for device in devices:
+        print(f"  - {device.player_name}")
     return devices
 
 def select_device(devices: List[soco.SoCo]) -> Optional[soco.SoCo]:
