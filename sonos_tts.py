@@ -8,6 +8,12 @@ Discovers Sonos devices on the network and plays text messages using Google TTS.
 __version__ = "1.0.0"
 
 import sys
+import warnings
+
+# Suppress urllib3 OpenSSL warning
+warnings.filterwarnings('ignore', message='urllib3 v2 only supports OpenSSL')
+
+import sys
 import soco
 from typing import List, Optional
 from gtts import gTTS
@@ -249,9 +255,13 @@ def restore_state(device: soco.SoCo, state: dict) -> bool:
         if state.get('track_uri') and state['transport_state'] in ['PLAYING', 'PAUSED_PLAYBACK']:
             device.play_uri(state['track_uri'])
 
-            # Seek to position if available
-            if state.get('position') and state['position'] != '0:00:00':
-                device.seek(state['position'])
+            # Seek to position if available and valid
+            position = state.get('position', '0:00:00')
+            if position and position != '0:00:00' and position != 'NOT_IMPLEMENTED':
+                try:
+                    device.seek(position)
+                except Exception:
+                    pass  # Skip seek if position is invalid
 
             # Resume if it was paused
             if state['transport_state'] == 'PAUSED_PLAYBACK':
@@ -265,6 +275,62 @@ def restore_state(device: soco.SoCo, state: dict) -> bool:
         return False
 
     return True
+
+
+def get_group_coordinator(device: soco.SoCo) -> soco.SoCo:
+    """
+    Get the coordinator (master) of a device's group.
+
+    Args:
+        device: SoCo device object
+
+    Returns:
+        The group coordinator device
+    """
+    return device.group.coordinator
+
+
+def create_group(devices: List[soco.SoCo]) -> soco.SoCo:
+    """
+    Create a group with all devices and return the coordinator.
+
+    Args:
+        devices: List of SoCo device objects to group
+
+    Returns:
+        The group coordinator device
+    """
+    if not devices:
+        return None
+
+    if len(devices) == 1:
+        return devices[0]
+
+    # Use first device as coordinator
+    coordinator = devices[0]
+
+    # Join other devices to the coordinator's group
+    for device in devices[1:]:
+        try:
+            device.join(coordinator)
+        except Exception as e:
+            print(f"Warning: Could not group {device.player_name}: {e}")
+
+    return coordinator
+
+
+def ungroup_all(devices: List[soco.SoCo]) -> None:
+    """
+    Ungroup all devices (each becomes its own group).
+
+    Args:
+        devices: List of SoCo device objects to ungroup
+    """
+    for device in devices:
+        try:
+            device.unjoin()
+        except Exception:
+            pass  # Already ungrouped or error
 
 
 def play_on_sonos(device: soco.SoCo, audio_url: str, volume: Optional[int] = None) -> bool:
@@ -452,27 +518,31 @@ def main():
     server, audio_url = server_result
 
     try:
-        # Play on Sonos device(s) simultaneously using threads
-        threads = []
-        results = {}
+        # If playing on multiple devices, use grouping for synchronized playback
+        if len(target_devices) > 1 and not args.device:
+            print("Creating temporary group for synchronized playback...")
 
-        def play_thread(device):
-            """Thread function to play on a single device."""
-            results[device.player_name] = play_on_sonos(device, audio_url, volume=args.volume)
+            # Save original group states
+            original_coordinators = {d: get_group_coordinator(d) for d in target_devices}
 
-        # Start a thread for each device
-        for device in target_devices:
-            thread = threading.Thread(target=play_thread, args=(device,))
-            thread.start()
-            threads.append(thread)
+            # Create group and get coordinator
+            coordinator = create_group(target_devices)
 
-        # Wait for all threads to complete
-        for thread in threads:
-            thread.join()
+            # Play on the group coordinator (plays on all grouped devices simultaneously)
+            success = play_on_sonos(coordinator, audio_url, volume=args.volume)
 
-        # Check if any failed
-        if not all(results.values()):
-            print("Warning: Playback failed on one or more devices")
+            # Restore original grouping
+            print("Restoring original speaker groups...")
+            ungroup_all(target_devices)
+
+            if not success:
+                print("Warning: Playback failed")
+        else:
+            # Single device or specific device selected - play directly
+            for device in target_devices:
+                success = play_on_sonos(device, audio_url, volume=args.volume)
+                if not success:
+                    print(f"Warning: Playback failed on {device.player_name}")
 
     finally:
         # Cleanup
