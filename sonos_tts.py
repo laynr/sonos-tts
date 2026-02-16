@@ -335,8 +335,8 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s --list                              # List available devices
-  %(prog)s "Hello world"                       # Play on all devices
+  %(prog)s --list-devices                      # List available devices
+  %(prog)s "Hello world"                       # Play on all devices (simultaneously)
   %(prog)s "Welcome home" --volume 50          # All devices at volume 50
   %(prog)s "Good morning" --device Kitchen     # Play on specific device
   %(prog)s "Bonjour" --lang fr --device Bedroom
@@ -384,7 +384,7 @@ Examples:
     )
 
     parser.add_argument(
-        '--list',
+        '--list-devices',
         action='store_true',
         help='List available Sonos devices and exit'
     )
@@ -396,7 +396,7 @@ Examples:
         parser.error("Volume must be between 0 and 100")
 
     # Make message optional if just listing devices
-    if args.list and not args.message:
+    if args.list_devices and not args.message:
         args.message = None
 
     return args
@@ -410,8 +410,8 @@ def main():
     if not devices:
         return 1
 
-    # If --list flag, show devices and exit
-    if args.list:
+    # If --list-devices flag, show devices and exit
+    if args.list_devices:
         print("\nAvailable Sonos devices:")
         for device in devices:
             print(f"  - {device.player_name} ({device.ip_address})")
@@ -419,7 +419,7 @@ def main():
 
     # Require message if not just listing
     if not args.message:
-        print("Error: message is required (unless using --list)")
+        print("Error: message is required (unless using --list-devices)")
         return 1
 
     # Determine which devices to use
@@ -452,14 +452,26 @@ def main():
     server, audio_url = server_result
 
     try:
-        # Play on Sonos device(s)
-        all_success = True
-        for device in target_devices:
-            success = play_on_sonos(device, audio_url, volume=args.volume)
-            if not success:
-                all_success = False
+        # Play on Sonos device(s) simultaneously using threads
+        threads = []
+        results = {}
 
-        if not all_success:
+        def play_thread(device):
+            """Thread function to play on a single device."""
+            results[device.player_name] = play_on_sonos(device, audio_url, volume=args.volume)
+
+        # Start a thread for each device
+        for device in target_devices:
+            thread = threading.Thread(target=play_thread, args=(device,))
+            thread.start()
+            threads.append(thread)
+
+        # Wait for all threads to complete
+        for thread in threads:
+            thread.join()
+
+        # Check if any failed
+        if not all(results.values()):
             print("Warning: Playback failed on one or more devices")
 
     finally:
