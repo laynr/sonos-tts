@@ -352,13 +352,21 @@ def create_group(devices: List[soco.SoCo]) -> soco.SoCo:
 
     # Use first device as coordinator
     coordinator = devices[0]
+    print(f"  Using {coordinator.player_name} as group coordinator")
 
     # Join other devices to the coordinator's group
     for device in devices[1:]:
         try:
+            print(f"  Joining {device.player_name} to group...")
             device.join(coordinator)
+            time.sleep(0.5)  # Give it time to join
         except Exception as e:
-            print(f"Warning: Could not group {device.player_name}: {e}")
+            print(f"  ERROR: Could not group {device.player_name}: {e}")
+
+    # Verify the group was formed
+    time.sleep(1)  # Wait for group to stabilize
+    group_members = coordinator.group.members
+    print(f"  Group formed with {len(group_members)} member(s): {', '.join([m.player_name for m in group_members])}")
 
     return coordinator
 
