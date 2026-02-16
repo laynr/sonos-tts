@@ -366,7 +366,16 @@ def create_group(devices: List[soco.SoCo]) -> soco.SoCo:
     # Verify the group was formed
     time.sleep(1)  # Wait for group to stabilize
     group_members = coordinator.group.members
-    print(f"  Group formed with {len(group_members)} member(s): {', '.join([m.player_name for m in group_members])}")
+    # Get unique visible player names (exclude bonded/hidden speakers)
+    visible_members = list(set([m.player_name for m in group_members]))
+    print(f"  Group formed with {len(visible_members)} visible device(s): {', '.join(visible_members)}")
+
+    # Check if all target devices are in the group
+    target_names = set([d.player_name for d in devices])
+    grouped_names = set(visible_members)
+    if not target_names.issubset(grouped_names):
+        missing = target_names - grouped_names
+        print(f"  WARNING: Some devices didn't join: {', '.join(missing)}")
 
     return coordinator
 
