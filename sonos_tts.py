@@ -43,12 +43,7 @@ def discover_devices(timeout: int = 5) -> List[soco.SoCo]:
         print("No Sonos devices found. Make sure you're on the same network.")
         return []
 
-    print(f"Found {len(devices)} device(s):")
-    for device in devices:
-        print(f"  - {device.player_name}")
-
-    # Show existing groups
-    print(f"\nExisting groups:")
+    # Build groups
     groups = {}
     for device in devices:
         coordinator = get_group_coordinator(device)
@@ -57,7 +52,8 @@ def discover_devices(timeout: int = 5) -> List[soco.SoCo]:
             groups[coord_name] = []
         groups[coord_name].append(device.player_name)
 
-    # Display all groups (including single devices)
+    # Display devices organized by groups
+    print(f"Found {len(devices)} device(s) in {len(groups)} group(s):")
     for coord, members in groups.items():
         if len(members) > 1:
             print(f"  - {coord} (coordinator): {', '.join(members)}")
