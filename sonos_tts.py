@@ -211,6 +211,7 @@ def capture_state(device: soco.SoCo) -> dict:
             'track_uri': track_info.get('uri', ''),
             'position': track_info.get('position', '0:00:00'),
             'volume': device.volume,
+            'status_light': device.status_light,
         }
 
         print(f"Captured state: {state['transport_state']}")
@@ -239,6 +240,10 @@ def restore_state(device: soco.SoCo, state: dict) -> bool:
         # Restore volume
         if 'volume' in state:
             device.volume = state['volume']
+
+        # Restore status light
+        if 'status_light' in state:
+            device.status_light = state['status_light']
 
         # Restore playback if there was something playing
         if state.get('track_uri') and state['transport_state'] in ['PLAYING', 'PAUSED_PLAYBACK']:
@@ -278,6 +283,9 @@ def play_on_sonos(device: soco.SoCo, audio_url: str, volume: Optional[int] = Non
     previous_state = capture_state(device)
 
     try:
+        # Turn off status light to prevent LED from turning on
+        device.status_light = False
+
         # Set volume if specified
         if volume is not None:
             print(f"Setting volume to {volume}")
@@ -327,9 +335,10 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s "Hello world"
-  %(prog)s "Welcome home" --volume 50
-  %(prog)s "Good morning" --lang en-gb
+  %(prog)s "Hello world"                      # Play on all devices
+  %(prog)s "Welcome home" --volume 50          # All devices at volume 50
+  %(prog)s "Good morning" --device Kitchen     # Play on specific device
+  %(prog)s "Bonjour" --lang fr --device Bedroom
         """
     )
 
@@ -366,6 +375,12 @@ Examples:
         help='Device discovery timeout in seconds (default: 5)'
     )
 
+    parser.add_argument(
+        '--device', '-d',
+        metavar='NAME',
+        help='Play on specific device by name. If not specified, plays on all devices.'
+    )
+
     args = parser.parse_args()
 
     # Validate volume
@@ -383,10 +398,21 @@ def main():
     if not devices:
         return 1
 
-    device = select_device(devices)
-    if not device:
-        print("No device selected. Exiting.")
-        return 1
+    # Determine which devices to use
+    if args.device:
+        # Find specific device by name
+        target_devices = [d for d in devices if d.player_name.lower() == args.device.lower()]
+        if not target_devices:
+            print(f"Device '{args.device}' not found.")
+            print("Available devices:")
+            for device in devices:
+                print(f"  - {device.player_name}")
+            return 1
+        print(f"Selected device: {target_devices[0].player_name}")
+    else:
+        # Use all devices
+        target_devices = devices
+        print(f"Playing on all {len(target_devices)} device(s)")
 
     # Generate TTS
     audio_file = generate_tts(args.message, lang=args.lang)
@@ -402,11 +428,15 @@ def main():
     server, audio_url = server_result
 
     try:
-        # Play on Sonos
-        success = play_on_sonos(device, audio_url, volume=args.volume)
+        # Play on Sonos device(s)
+        all_success = True
+        for device in target_devices:
+            success = play_on_sonos(device, audio_url, volume=args.volume)
+            if not success:
+                all_success = False
 
-        if not success:
-            return 1
+        if not all_success:
+            print("Warning: Playback failed on one or more devices")
 
     finally:
         # Cleanup
