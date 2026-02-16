@@ -46,6 +46,21 @@ def discover_devices(timeout: int = 5) -> List[soco.SoCo]:
     print(f"Found {len(devices)} device(s):")
     for device in devices:
         print(f"  - {device.player_name}")
+
+    # Show existing groups
+    groups = {}
+    for device in devices:
+        coordinator = get_group_coordinator(device)
+        if coordinator.player_name not in groups:
+            groups[coordinator.player_name] = []
+        groups[coordinator.player_name].append(device.player_name)
+
+    if len(groups) < len(devices):
+        print(f"\nExisting groups:")
+        for coord, members in groups.items():
+            if len(members) > 1:
+                print(f"  - {coord} group: {', '.join(members)}")
+
     return devices
 
 def select_device(devices: List[soco.SoCo]) -> Optional[soco.SoCo]:
@@ -360,7 +375,6 @@ def play_on_sonos(device: soco.SoCo, audio_url: str, volume: Optional[int] = Non
             device.volume = volume
 
         # Play TTS audio
-        print(f"Playing on {device.player_name}...")
         device.play_uri(audio_url)
 
         # Wait for playback to complete
@@ -529,6 +543,10 @@ def main():
 
             # Create group and get coordinator
             coordinator = create_group(target_devices)
+
+            # Show which devices are in the group
+            device_names = ', '.join([d.player_name for d in target_devices])
+            print(f"Playing on group: {device_names}")
 
             # Play on the group coordinator (plays on all grouped devices simultaneously)
             success = play_on_sonos(coordinator, audio_url, volume=args.volume)
