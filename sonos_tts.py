@@ -334,6 +334,23 @@ def check_if_grouped(devices: List[soco.SoCo]) -> Optional[soco.SoCo]:
     return None
 
 
+def is_home_theater(device: soco.SoCo) -> bool:
+    """
+    Check if device is a home theater setup (has bonded speakers).
+
+    Args:
+        device: SoCo device object
+
+    Returns:
+        True if device is part of a home theater setup
+    """
+    try:
+        # Check if device has bonded speakers (surround/sub)
+        return len(list(device.group.members)) > 1 and device.group.coordinator == device
+    except Exception:
+        return False
+
+
 def create_group(devices: List[soco.SoCo]) -> soco.SoCo:
     """
     Create a group with all devices and return the coordinator.
@@ -350,12 +367,24 @@ def create_group(devices: List[soco.SoCo]) -> soco.SoCo:
     if len(devices) == 1:
         return devices[0]
 
-    # Use first device as coordinator
-    coordinator = devices[0]
-    print(f"  Using {coordinator.player_name} as group coordinator")
+    # Prefer home theater device as coordinator (they often can't be grouped as members)
+    coordinator = None
+    for device in devices:
+        if is_home_theater(device):
+            coordinator = device
+            print(f"  Using {coordinator.player_name} as coordinator (home theater setup)")
+            break
+
+    # Otherwise use first device
+    if not coordinator:
+        coordinator = devices[0]
+        print(f"  Using {coordinator.player_name} as group coordinator")
 
     # Join other devices to the coordinator's group
-    for device in devices[1:]:
+    for device in devices:
+        if device.player_name == coordinator.player_name:
+            continue  # Skip coordinator itself
+
         try:
             print(f"  Joining {device.player_name} to group...")
             device.join(coordinator)
