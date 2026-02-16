@@ -48,18 +48,21 @@ def discover_devices(timeout: int = 5) -> List[soco.SoCo]:
         print(f"  - {device.player_name}")
 
     # Show existing groups
+    print(f"\nExisting groups:")
     groups = {}
     for device in devices:
         coordinator = get_group_coordinator(device)
-        if coordinator.player_name not in groups:
-            groups[coordinator.player_name] = []
-        groups[coordinator.player_name].append(device.player_name)
+        coord_name = coordinator.player_name
+        if coord_name not in groups:
+            groups[coord_name] = []
+        groups[coord_name].append(device.player_name)
 
-    if len(groups) < len(devices):
-        print(f"\nExisting groups:")
-        for coord, members in groups.items():
-            if len(members) > 1:
-                print(f"  - {coord} group: {', '.join(members)}")
+    # Display all groups (including single devices)
+    for coord, members in groups.items():
+        if len(members) > 1:
+            print(f"  - {coord} (coordinator): {', '.join(members)}")
+        else:
+            print(f"  - {coord} (standalone)")
 
     return devices
 
@@ -307,6 +310,34 @@ def get_group_coordinator(device: soco.SoCo) -> soco.SoCo:
     return device.group.coordinator
 
 
+def check_if_grouped(devices: List[soco.SoCo]) -> Optional[soco.SoCo]:
+    """
+    Check if all devices are already in the same group.
+
+    Args:
+        devices: List of SoCo device objects to check
+
+    Returns:
+        The coordinator if all devices are grouped together, None otherwise
+    """
+    if not devices:
+        return None
+
+    if len(devices) == 1:
+        return devices[0]
+
+    # Get coordinators for all devices
+    coordinators = [get_group_coordinator(d) for d in devices]
+
+    # Check if all have the same coordinator
+    first_coord = coordinators[0]
+    if all(c.player_name == first_coord.player_name for c in coordinators):
+        # All devices are already in the same group
+        return first_coord
+
+    return None
+
+
 def create_group(devices: List[soco.SoCo]) -> soco.SoCo:
     """
     Create a group with all devices and return the coordinator.
@@ -536,24 +567,30 @@ def main():
     try:
         # If playing on multiple devices, use grouping for synchronized playback
         if len(target_devices) > 1 and not args.device:
-            print("Creating temporary group for synchronized playback...")
+            # Check if devices are already grouped together
+            existing_coordinator = check_if_grouped(target_devices)
 
-            # Save original group states
-            original_coordinators = {d: get_group_coordinator(d) for d in target_devices}
-
-            # Create group and get coordinator
-            coordinator = create_group(target_devices)
-
-            # Show which devices are in the group
-            device_names = ', '.join([d.player_name for d in target_devices])
-            print(f"Playing on group: {device_names}")
+            if existing_coordinator:
+                # Use existing group
+                device_names = ', '.join([d.player_name for d in target_devices])
+                print(f"Using existing group: {device_names}")
+                coordinator = existing_coordinator
+                needs_ungroup = False
+            else:
+                # Create temporary group
+                print("Creating temporary group for synchronized playback...")
+                coordinator = create_group(target_devices)
+                device_names = ', '.join([d.player_name for d in target_devices])
+                print(f"Playing on group: {device_names}")
+                needs_ungroup = True
 
             # Play on the group coordinator (plays on all grouped devices simultaneously)
             success = play_on_sonos(coordinator, audio_url, volume=args.volume)
 
-            # Restore original grouping
-            print("Restoring original speaker groups...")
-            ungroup_all(target_devices)
+            # Restore original grouping only if we created a temporary group
+            if needs_ungroup:
+                print("Restoring original speaker groups...")
+                ungroup_all(target_devices)
 
             if not success:
                 print("Warning: Playback failed")
